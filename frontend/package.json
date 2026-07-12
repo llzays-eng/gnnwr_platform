@@ -1,0 +1,26 @@
+{
+  "name": "gnnwr-platform-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GNNWR/GTNNWR 时空智能分析云平台 —— 可视化分析层 (Vue3 + TS + Pinia)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@amap/amap-jsapi-loader": "^1.0.1",
+    "axios": "^1.7.7",
+    "element-plus": "^2.8.4",
+    "pinia": "^2.2.2",
+    "vue": "^3.5.10",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vue-tsc": "^2.1.6"
+  }
+}

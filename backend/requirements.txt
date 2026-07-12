@@ -1,0 +1,41 @@
+# ---- Web 框架（空间服务层）----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20          # 文件上传 / 表单
+pydantic==2.10.4
+pydantic-settings==2.7.1
+email-validator==2.2.0            # EmailStr 校验
+
+# ---- 鉴权 ----
+pyjwt==2.10.1
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+# ---- 数据库（PostgreSQL + PostGIS）----
+sqlalchemy==2.0.36
+geoalchemy2==0.16.0
+psycopg[binary]==3.2.3            # postgresql+psycopg 方言
+
+# ---- 任务队列 / 缓存 ----
+celery==5.4.0
+redis==5.2.1
+
+# ---- 数据处理 / 建模引擎 ----
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+openpyxl==3.1.5                   # 读 xlsx
+
+# ---- 存储 / 外部服务 ----
+minio==7.2.13                     # 对象存储（无则自动回退本地磁盘）
+requests==2.32.3                  # GeoServer REST
+
+# ---- 报告（可选：未安装则回退返回 HTML）----
+# weasyprint==63.1
+
+# ---- 生产环境建议：真实 GNNWR/GTNNWR 引擎（PyTorch，需 GPU）----
+# gnnwr                            # 导师团队开源包：https://github.com/zjuwss/gnnwr
+# torch
+
+# ---- 测试 ----
+pytest==8.3.4
+httpx==0.28.1

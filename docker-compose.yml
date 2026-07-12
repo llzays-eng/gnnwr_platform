@@ -1,0 +1,102 @@
+# ============================================================
+# GNNWR 时空智能分析云平台 —— 一键编排（大纲 3.5）
+# 服务：postgis / redis / minio / geoserver / api / worker(cpu+gpu) / frontend / nginx
+# 一期可先只起 postgis + redis + api + worker + frontend 跑通闭环。
+# ============================================================
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gnnwr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnnwr_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-gnnwr_platform}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gnnwr}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes: [minio_data:/data]
+    ports: ["9000:9000", "9001:9001"]
+
+  geoserver:
+    image: docker.osgeo.org/geoserver:2.25.2
+    environment:
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_USER:-admin}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_PASSWORD:-geoserver}
+    volumes: [geoserver_data:/opt/geoserver_data]
+    ports: ["8080:8080"]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    depends_on:
+      postgis: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["8000:8000"]
+
+  # CPU worker：数据清洗、坐标转换、入库
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: celery -A app.tasks.celery_app.celery_app worker -Q cpu_queue -c 4 --loglevel=info
+    env_file: .env
+    depends_on:
+      postgis: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  # GPU worker：GNNWR/GTNNWR 训练（生产环境请部署到带 GPU 的节点，
+  # 并在 requirements 中启用 torch + gnnwr；离线环境用 gnnwr_lite 亦可跑通）
+  worker-gpu:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: celery -A app.tasks.celery_app.celery_app worker -Q gpu_queue -c 1 --loglevel=info
+    env_file: .env
+    depends_on:
+      postgis: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    # 生产启用 GPU：
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 高德底图（可选）：在根 .env 里填 AMAP_KEY / AMAP_SECURITY 后重新 build。
+        # 留空则前端自动降级为离线 Canvas 渲染，闭环不受影响。
+        VITE_AMAP_KEY: ${AMAP_KEY:-}
+        VITE_AMAP_SECURITY: ${AMAP_SECURITY:-}
+    ports: ["5173:80"]
+    depends_on: [api]
+
+volumes:
+  pg_data:
+  minio_data:
+  geoserver_data:

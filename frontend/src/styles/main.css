@@ -1,0 +1,17 @@
+:root{
+  --ink:#0E141B; --panel:#141D28; --panel-2:#1A2531; --raised:#1F2C3A;
+  --line:#24323F; --line-soft:#1C2934;
+  --text:#E9EEF3; --muted:#8A99A8; --faint:#5C6B78;
+  --accent:#34D1BE; --accent-deep:#1B6F66; --accent-soft:rgba(52,209,190,.12);
+  --warn:#F0A050; --neg:#4E93DE; --pos:#EB7A54; --danger:#E5484D;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:"Inter","Segoe UI",-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body,#app{height:100%;margin:0}
+body{background:var(--ink);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;font-size:14px}
+a{color:var(--accent);text-decoration:none}
+.mono{font-family:var(--mono)}
+.el-button--primary{--el-button-bg-color:var(--accent-deep);--el-button-border-color:var(--accent-deep);--el-button-hover-bg-color:var(--accent);--el-button-hover-border-color:var(--accent)}
+.gp-card{background:var(--panel);border:1px solid var(--line);border-radius:13px}
+.gp-hd{font-size:12px;font-weight:620;letter-spacing:.4px;text-transform:uppercase;color:var(--muted)}
