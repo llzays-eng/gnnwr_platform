@@ -1,12 +1,25 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GNNWR 时空智能分析云平台</title>
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GNNWR 时空智能分析平台</title>
+    <!-- 字体自托管, 不走 CDN: 内网演示场景下 CDN 不可达会导致整个界面回落到系统字体。
+         中文字体必须子集化, 见 docs/字体子集化.md -->
+    <link rel="preload" href="/fonts/BarlowCondensed-SemiBold.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/IBMPlexMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      // 在首帧之前定主题, 避免深色用户看到一闪的浅色地图
+      (function () {
+        var t = localStorage.getItem('gnnwr:theme');
+        if (!t || t === 'auto') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

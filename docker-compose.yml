@@ -1,8 +1,5 @@
-# ============================================================
-# GNNWR 时空智能分析云平台 —— 一键编排（大纲 3.5）
-# 服务：postgis / redis / minio / geoserver / api / worker(cpu+gpu) / frontend / nginx
-# 一期可先只起 postgis + redis + api + worker + frontend 跑通闭环。
-# ============================================================
+# GNNWR 平台 monorepo：API + Workers + 前端 + PostGIS/Redis/MinIO
+# 可选：docker compose --profile extras up  启动 GeoServer
 services:
   postgis:
     image: postgis/postgis:16-3.4
@@ -39,6 +36,7 @@ services:
     ports: ["9000:9000", "9001:9001"]
 
   geoserver:
+    profiles: ["extras"]
     image: docker.osgeo.org/geoserver:2.25.2
     environment:
       GEOSERVER_ADMIN_USER: ${GEOSERVER_USER:-admin}
@@ -47,56 +45,72 @@ services:
     ports: ["8080:8080"]
 
   api:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    env_file: .env
+    build: ./backend
+    environment: &app_env
+      POSTGRES_HOST: postgis
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-gnnwr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnnwr_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-gnnwr_platform}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: gnnwr
+      LOCAL_STORAGE_DIR: /data/gnnwr-storage
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION_please_use_openssl_rand_hex_32}
+      ENGINE_BACKEND: ${ENGINE_BACKEND:-gnnwr_lite}
+      SURFACE_TILE_CRS: GCJ02
+      VECTOR_OUTPUT_CRS: WGS84
+      DEBUG: ${DEBUG:-false}
+      WS_REQUIRE_AUTH: ${WS_REQUIRE_AUTH:-true}
+      ALLOW_INLINE_JOBS: ${ALLOW_INLINE_JOBS:-false}
+      TILE_TOKEN_EXPIRE_MINUTES: ${TILE_TOKEN_EXPIRE_MINUTES:-60}
+    volumes:
+      - gnnwr_storage:/data/gnnwr-storage
     depends_on:
       postgis: {condition: service_healthy}
       redis: {condition: service_healthy}
     ports: ["8000:8000"]
 
-  # CPU worker：数据清洗、坐标转换、入库
   worker-cpu:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     command: celery -A app.tasks.celery_app.celery_app worker -Q cpu_queue -c 4 --loglevel=info
-    env_file: .env
+    environment: *app_env
+    volumes:
+      - gnnwr_storage:/data/gnnwr-storage
     depends_on:
       postgis: {condition: service_healthy}
       redis: {condition: service_healthy}
 
-  # GPU worker：GNNWR/GTNNWR 训练（生产环境请部署到带 GPU 的节点，
-  # 并在 requirements 中启用 torch + gnnwr；离线环境用 gnnwr_lite 亦可跑通）
   worker-gpu:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     command: celery -A app.tasks.celery_app.celery_app worker -Q gpu_queue -c 1 --loglevel=info
-    env_file: .env
+    environment: *app_env
+    volumes:
+      - gnnwr_storage:/data/gnnwr-storage
     depends_on:
       postgis: {condition: service_healthy}
       redis: {condition: service_healthy}
-    # 生产启用 GPU：
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
       args:
-        # 高德底图（可选）：在根 .env 里填 AMAP_KEY / AMAP_SECURITY 后重新 build。
-        # 留空则前端自动降级为离线 Canvas 渲染，闭环不受影响。
-        VITE_AMAP_KEY: ${AMAP_KEY:-}
-        VITE_AMAP_SECURITY: ${AMAP_SECURITY:-}
-    ports: ["5173:80"]
+        # 浏览器从宿主机访问时直连 API；若只走 nginx 同源反代可留空
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-}
+        VITE_AMAP_KEY: ${VITE_AMAP_KEY:-}
+        VITE_AMAP_SECURITY_CODE: ${VITE_AMAP_SECURITY_CODE:-}
+        VITE_ENABLE_MOCK: ${VITE_ENABLE_MOCK:-false}
+        VITE_MOCK_ASSUME_PENDING_CONTRACTS: ${VITE_MOCK_ASSUME_PENDING_CONTRACTS:-false}
     depends_on: [api]
+    ports: ["5173:80"]
 
 volumes:
   pg_data:
   minio_data:
   geoserver_data:
+  gnnwr_storage:

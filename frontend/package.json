@@ -1,26 +1,72 @@
 {
-  "name": "gnnwr-platform-frontend",
-  "version": "1.0.0",
+  "name": "gnnwr-web",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "description": "GNNWR/GTNNWR 时空智能分析云平台 —— 可视化分析层 (Vue3 + TS + Pinia)",
+  "packageManager": "pnpm@9.12.0",
+  "engines": { "node": ">=20.11" },
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.{ts,vue,css,json,md}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "size": "size-limit",
+    "analyze": "vite build --mode analyze",
+    "mock:init": "msw init public/ --save",
+    "prepare": "husky"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
+    "@tanstack/vue-query": "^5.59.0",
+    "@vueuse/core": "^11.1.0",
     "axios": "^1.7.7",
+    "comlink": "^4.4.1",
+    "dayjs": "^1.11.13",
+    "echarts": "^5.5.1",
     "element-plus": "^2.8.4",
-    "pinia": "^2.2.2",
-    "vue": "^3.5.10",
+    "pinia": "^2.2.4",
+    "vue": "^3.5.11",
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.12.0",
+    "@iconify-json/ph": "^1.2.1",
+    "@types/node": "^22.7.5",
+    "@typescript-eslint/eslint-plugin": "^8.8.1",
+    "@typescript-eslint/parser": "^8.8.1",
+    "@unocss/preset-wind": "^0.63.4",
     "@vitejs/plugin-vue": "^5.1.4",
-    "typescript": "^5.6.2",
-    "vite": "^5.4.8",
+    "@vue/test-utils": "^2.4.6",
+    "eslint": "^9.12.0",
+    "eslint-plugin-vue": "^9.29.0",
+    "husky": "^9.1.6",
+    "jsdom": "^25.0.1",
+    "lint-staged": "^15.2.10",
+    "msw": "^2.4.9",
+    "prettier": "^3.3.3",
+    "rollup-plugin-visualizer": "^5.12.0",
+    "size-limit": "^11.1.6",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.8.1",
+    "unocss": "^0.63.4",
+    "unplugin-auto-import": "^0.18.3",
+    "unplugin-vue-components": "^0.27.4",
+    "vite": "^5.4.9",
+    "vitest": "^2.1.2",
     "vue-tsc": "^2.1.6"
-  }
+  },
+  "msw": { "workerDirectory": ["public"] },
+  "lint-staged": {
+    "*.{ts,vue}": ["eslint --fix", "prettier --write"],
+    "*.{css,json,md}": ["prettier --write"]
+  },
+  "size-limit": [
+    { "name": "首屏 JS", "path": "dist/assets/index-*.js", "limit": "180 kB" },
+    { "name": "地图分包", "path": "dist/assets/map-*.js", "limit": "300 kB" }
+  ]
 }

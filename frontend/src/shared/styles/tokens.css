@@ -1,0 +1,105 @@
+/* ═══════════════════════════════════════════════════════════════
+ * 设计令牌。阶段 0 设计方案的代码落地。
+ *
+ * 三条不可协商的用色纪律:
+ *  1. --c-signal 永不进入地图画布与图例 —— 交互色与数据色必须互斥,
+ *     否则用户无法判断一块紫色是"可以点"还是"数值高"
+ *  2. 发散色带去色后仍呈"深—浅—深", 形状本身携带信息
+ *  3. 色带零点明度跟随基面 —— 零点比背景亮会让整张系数图处处像有信号
+ * ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 6 个命名色 ── */
+  --c-north:    #0B1F2A;  /* 磁北 */
+  --c-mylar:    #F2F4F3;  /* 蜡纸。冷偏, 刻意不是米白 */
+  --c-graphite: #5B6770;  /* 石墨 */
+  --c-isoline:  #0F7C7B;  /* 等值青 · 发散负端 / 已完成态 */
+  --c-ochre:    #C2611D;  /* 赭土 · 发散正端 */
+  --c-signal:   #6B4DF0;  /* 电紫 · 唯一交互色 */
+  --c-alarm:    #B5323C;  /* 仅错误, 绝不作数据色 */
+
+  /* ── 语义面 ── */
+  --s-page:    var(--c-mylar);
+  --s-surface: #FFFFFF;
+  --s-raised:  #FAFBFA;
+  --s-panel:   rgb(255 255 255 / 0.82);   /* 蜡纸浮层, 配 backdrop-filter */
+  --s-inset:   #E9ECEB;
+
+  --fg:        var(--c-north);
+  --fg-muted:  var(--c-graphite);
+  --fg-faint:  #8A959C;
+  --fg-invert: #FFFFFF;
+
+  --edge:      rgb(11 31 42 / 0.12);
+  --edge-strong: rgb(11 31 42 / 0.22);
+
+  /* ── 数据色带零点。明度跟随基面。 ── */
+  --ramp-zero: #EFE9DD;
+
+  /* ── 字 ── */
+  --font-display: 'Barlow Condensed', 'Noto Sans SC', 'PingFang SC', sans-serif;
+  --font-body:    'Barlow', 'Noto Sans SC', 'PingFang SC', sans-serif;
+  --font-data:    'IBM Plex Mono', 'Noto Sans SC', ui-monospace, monospace;
+
+  --fs-11: 11px; --fs-12: 12px; --fs-14: 14px; --fs-16: 16px;
+  --fs-20: 20px; --fs-25: 25px; --fs-32: 32px; --fs-40: 40px;
+
+  /* 中文没有窄体, 显示角色靠字重 + 字距区分 */
+  --track-eyebrow: 0.14em;
+  --track-display: 0.06em;
+
+  /* ── 间距 / 圆角 ── */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-6: 24px; --sp-8: 32px; --sp-12: 48px; --sp-16: 64px;
+
+  --r-0: 0;      /* 图例色块: 圆角会让相邻分级出现视觉缝隙, 破坏连续性 */
+  --r-xs: 2px; --r-sm: 6px; --r-panel: 12px; --r-full: 999px;
+
+  /* ── 层级。地图上不能用普通投影: 浅底上脏, 深底上不存在。
+        改用 发丝线 + 极轻长阴影 + 背景模糊。 ── */
+  --e1: 0 0 0 1px var(--edge), 0 2px 12px rgb(0 0 0 / 0.10);
+  --e2: 0 0 0 1px var(--edge), 0 8px 24px rgb(0 0 0 / 0.16);
+  --e3: 0 24px 64px rgb(0 0 0 / 0.28);
+  --blur-panel: 12px;
+
+  --dur-fast: 120ms; --dur-base: 220ms; --dur-slow: 420ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+[data-theme='dark'] {
+  --s-page:    #08151C;
+  --s-surface: #0E212B;
+  --s-raised:  #142A35;
+  --s-panel:   rgb(14 33 43 / 0.84);
+  --s-inset:   #0A1A22;
+
+  --fg:        #E6EDF0;
+  --fg-muted:  #93A4AE;
+  --fg-faint:  #64757F;
+  --fg-invert: var(--c-north);
+
+  --edge:        rgb(255 255 255 / 0.14);
+  --edge-strong: rgb(255 255 255 / 0.26);
+
+  /* 深色下零点必须变暗, 否则零值看起来像高信号 */
+  --ramp-zero: #2A3138;
+
+  /* 数据色在深色底上换高明度变体, 保持同一色相 */
+  --c-isoline: #2FA9A2;
+  --c-ochre:   #E0873C;
+  --c-signal:  #8B72FF;
+  --c-alarm:   #E05561;
+
+  --e1: 0 0 0 1px var(--edge), 0 2px 14px rgb(0 0 0 / 0.45);
+  --e2: 0 0 0 1px var(--edge), 0 10px 28px rgb(0 0 0 / 0.55);
+  --e3: 0 24px 64px rgb(0 0 0 / 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

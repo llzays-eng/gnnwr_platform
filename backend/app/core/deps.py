@@ -1,4 +1,4 @@
-"""FastAPI 依赖：从 JWT 解析当前用户、按角色做权限守卫。"""
+"""FastAPI 依赖：JWT 当前用户、角色守卫。"""
 from __future__ import annotations
 
 import jwt
@@ -7,7 +7,8 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import Role, decode_access_token
+from app.core.redis_client import is_jti_denied
+from app.core.security import Role, decode_token
 from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -21,7 +22,11 @@ _CRED_EXC = HTTPException(
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     try:
-        payload = decode_access_token(token)
+        payload = decode_token(token)
+        if payload.get("typ") not in (None, "access"):
+            raise _CRED_EXC
+        if is_jti_denied(payload.get("jti")):
+            raise _CRED_EXC
         user_id = payload.get("sub")
         if user_id is None:
             raise _CRED_EXC

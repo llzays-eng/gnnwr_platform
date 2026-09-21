@@ -1,8 +1,9 @@
-"""鉴权与安全：bcrypt 密码哈希 + JWT 令牌 + 三级角色（guest/user/admin）。"""
+"""鉴权：bcrypt 密码哈希 + JWT（access / refresh）+ 角色。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from uuid import uuid4
 
 import jwt
 from passlib.context import CryptContext
@@ -13,9 +14,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class Role(str, Enum):
-    guest = "guest"      # 只读演示
-    user = "user"        # 普通用户：自己的项目 CRUD、建模
-    admin = "admin"      # 管理员：全部权限
+    guest = "guest"
+    user = "user"
+    admin = "admin"
 
 
 def hash_password(raw: str) -> str:
@@ -26,13 +27,40 @@ def verify_password(raw: str, hashed: str) -> bool:
     return pwd_context.verify(raw, hashed)
 
 
-def create_access_token(subject: str, role: str, expires_minutes: int | None = None) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(
-        minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    )
-    payload = {"sub": subject, "role": role, "exp": exp}
+def _encode(payload: dict) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_access_token(token: str) -> dict:
+def create_access_token(subject: str, role: str, expires_minutes: int | None = None) -> str:
+    minutes = expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "role": role,
+        "typ": "access",
+        "jti": uuid4().hex,
+        "iat": now,
+        "exp": now + timedelta(minutes=minutes),
+    }
+    return _encode(payload)
+
+
+def create_refresh_token(subject: str, role: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "role": role,
+        "typ": "refresh",
+        "jti": uuid4().hex,
+        "iat": now,
+        "exp": now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    }
+    return _encode(payload)
+
+
+def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+
+
+# 兼容旧名
+decode_access_token = decode_token

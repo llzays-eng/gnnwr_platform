@@ -1,37 +1,46 @@
 """
-对象存储（大纲 3.4 MinIO）
-=========================
-存放原始上传文件、模型权重(.pth)、PDF 报告、导出的栅格结果。
-优先用 MinIO；若未配置/不可用，自动回退本地磁盘（一期单体部署可直接用），
-接口保持一致，后续切换 MinIO 零改动。
+对象存储：优先 MinIO，不可用则回退本地磁盘。api 与 worker 需共享同一后端。
 """
 from __future__ import annotations
 
 import io
-import os
+import logging
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 from app.core.config import settings
+
+log = logging.getLogger(__name__)
 
 
 class StorageService:
     def __init__(self) -> None:
         self._minio = None
         self._local_dir = Path(settings.LOCAL_STORAGE_DIR)
+        self._local_dir.mkdir(parents=True, exist_ok=True)
+        prefer = settings.STORAGE_BACKEND.lower()
+        if prefer != "local":
+            self._try_minio()
+        if prefer == "minio" and self._minio is None:
+            log.warning("STORAGE_BACKEND=minio 但 MinIO 不可用，回退本地磁盘")
+
+    def _try_minio(self) -> None:
         try:
-            from minio import Minio  # 延迟导入，未安装则回退
-            self._minio = Minio(
+            from minio import Minio
+
+            client = Minio(
                 settings.MINIO_ENDPOINT,
                 access_key=settings.MINIO_ACCESS_KEY,
                 secret_key=settings.MINIO_SECRET_KEY,
                 secure=settings.MINIO_SECURE,
             )
-            if not self._minio.bucket_exists(settings.MINIO_BUCKET):
-                self._minio.make_bucket(settings.MINIO_BUCKET)
-        except Exception:
+            if not client.bucket_exists(settings.MINIO_BUCKET):
+                client.make_bucket(settings.MINIO_BUCKET)
+            self._minio = client
+        except Exception as exc:  # noqa: BLE001
+            log.info("MinIO 未启用（%s），使用本地存储 %s", exc, self._local_dir)
             self._minio = None
-            self._local_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def backend(self) -> str:
@@ -39,8 +48,10 @@ class StorageService:
 
     def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
         if self._minio:
-            self._minio.put_object(settings.MINIO_BUCKET, key, io.BytesIO(data),
-                                   length=len(data), content_type=content_type)
+            self._minio.put_object(
+                settings.MINIO_BUCKET, key, io.BytesIO(data),
+                length=len(data), content_type=content_type,
+            )
         else:
             path = self._local_dir / key
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,14 +77,41 @@ class StorageService:
                 resp.release_conn()
         return (self._local_dir / key).read_bytes()
 
+    def exists(self, key: str) -> bool:
+        if self._minio:
+            try:
+                self._minio.stat_object(settings.MINIO_BUCKET, key)
+                return True
+            except Exception:
+                return False
+        return (self._local_dir / key).exists()
+
     def local_path(self, key: str) -> str:
-        """返回一个本地可读路径（Celery worker 需要文件路径时用）。"""
         if self._minio:
             tmp = Path("/tmp/gnnwr-cache") / key
             tmp.parent.mkdir(parents=True, exist_ok=True)
             self._minio.fget_object(settings.MINIO_BUCKET, key, str(tmp))
             return str(tmp)
         return str(self._local_dir / key)
+
+    def presign_put(self, key: str, expires: int = 3600) -> str | None:
+        if not self._minio:
+            return None
+        return self._minio.presigned_put_object(
+            settings.MINIO_BUCKET, key, expires=timedelta(seconds=expires)
+        )
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        if self._minio:
+            return [o.object_name for o in self._minio.list_objects(
+                settings.MINIO_BUCKET, prefix=prefix, recursive=True
+            )]
+        root = self._local_dir / prefix
+        if not root.exists():
+            return []
+        if root.is_file():
+            return [prefix]
+        return [str(p.relative_to(self._local_dir)) for p in root.rglob("*") if p.is_file()]
 
 
 storage = StorageService()

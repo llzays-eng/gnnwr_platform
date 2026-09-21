@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["vite/client"],
+
+    /* 严格模式全开。noUncheckedIndexedAccess 是为坐标数组而开的:
+       xy[i] 的类型会是 number | undefined, 强迫调用方处理越界,
+       这在批量坐标缓冲区上救过命。 */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    /* exactOptionalPropertyTypes 刻意【关闭】:
+       axios 的 AxiosRequestConfig 大量使用 `signal?: X` 形式, 而我们的 api 包装
+       普遍以 `signal?: AbortSignal` 透传, 开启后每个透传点都要写条件展开。
+       收益(区分"缺失"与"显式 undefined")在本项目里几乎为零, 成本很高。
+       其余严格项全开。 */
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "jsx": "preserve",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@shared/*": ["src/shared/*"],
+      "@modules/*": ["src/modules/*"],
+      "@stores/*": ["src/stores/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts"],
+  "exclude": ["src/**/__tests__/*"]
+}
