@@ -1,13 +1,6 @@
 """
-字段映射器（大纲 2.3 / 4.2 —— 平台"通用"的关键）
-================================================
-两个核心场景数据结构完全不同（遥感栅格协变量 vs. 房源点位属性），但都能抽象为
-"一个（空间点，[时间]），若干属性字段，一个目标值"。本组件对**任意**上传表格：
-  1. 自动识别经度/纬度候选列（按列名模式 + 数值范围双重判据）；
-  2. 自动识别时间候选列（列名 + 可解析为日期/序号）；
-  3. 推荐目标变量 Y 与自变量 X；
-  4. 校验用户最终确认的映射是否自洽。
-从而做到"字段可配置"而非为某类数据写死解析逻辑。
+字段映射器：对任意上传表格自动识别经纬度 / 时间 / Y / X 候选。
+场景类型只影响默认文案，不写死列名。
 """
 from __future__ import annotations
 
@@ -16,7 +9,6 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-# 列名关键词（中英文）
 _LON_KEYS = ["lon", "lng", "longitude", "经度", "x坐标", "x_coord", "经"]
 _LAT_KEYS = ["lat", "latitude", "纬度", "y坐标", "y_coord", "纬"]
 _TIME_KEYS = ["time", "date", "datetime", "timestamp", "day", "month", "year",
@@ -45,10 +37,7 @@ def _looks_like_lat(s: pd.Series) -> bool:
 
 
 def _looks_like_time(s: pd.Series) -> bool:
-    # 整数序号（如 day=0..N）或可解析为日期
-    if pd.api.types.is_integer_dtype(s):
-        return True
-    if pd.api.types.is_datetime64_any_dtype(s):
+    if pd.api.types.is_integer_dtype(s) or pd.api.types.is_datetime64_any_dtype(s):
         return True
     try:
         pd.to_datetime(s.dropna().head(20), errors="raise")
@@ -64,17 +53,38 @@ class MappingSuggestion:
     temporal: str | None = None
     y: str | None = None
     x: list[str] = field(default_factory=list)
-    candidates: dict = field(default_factory=dict)  # 各角色的候选列，供前端下拉
+    candidates: dict = field(default_factory=dict)
+    confidence: float = 0.0
+    reason: str = ""
 
     def to_dict(self) -> dict:
         return {
-            "lon": self.lon, "lat": self.lat, "temporal": self.temporal,
-            "y": self.y, "x": self.x, "candidates": self.candidates,
+            "lon": self.lon,
+            "lat": self.lat,
+            "temporal": self.temporal,
+            "y": self.y,
+            "x": self.x,
+            "candidates": self.candidates,
+            "longitude": self.lon,
+            "latitude": self.lat,
+            "confidence": self.confidence,
+            "reason": self.reason,
+        }
+
+    def as_column_guess(self) -> dict:
+        return {
+            "longitude": self.lon,
+            "latitude": self.lat,
+            "temporal": self.temporal,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "y": self.y,
+            "x": self.x,
+            "candidates": self.candidates,
         }
 
 
 def suggest_mapping(df: pd.DataFrame) -> MappingSuggestion:
-    """对 DataFrame 给出字段映射建议。前端据此预填，用户可改。"""
     cols = list(df.columns)
     lon_c, lat_c, time_c = [], [], []
 
@@ -82,7 +92,6 @@ def suggest_mapping(df: pd.DataFrame) -> MappingSuggestion:
         s = df[c]
         name_lon = _match_any(c, _LON_KEYS)
         name_lat = _match_any(c, _LAT_KEYS)
-        # 经度关键词优先于纬度，避免 "longitude" 命中 "lat"（其实不会，但保险）
         if name_lon and _looks_like_lon(s):
             lon_c.append(c)
         elif name_lat and _looks_like_lat(s):
@@ -90,7 +99,6 @@ def suggest_mapping(df: pd.DataFrame) -> MappingSuggestion:
         elif _match_any(c, _TIME_KEYS) and _looks_like_time(s):
             time_c.append(c)
 
-    # 关键词没命中时，用数值范围兜底猜经纬度
     if not lon_c:
         lon_c = [c for c in cols if _looks_like_lon(df[c]) and c not in lat_c][:2]
     if not lat_c:
@@ -102,22 +110,26 @@ def suggest_mapping(df: pd.DataFrame) -> MappingSuggestion:
     sug.temporal = time_c[0] if time_c else None
 
     used = {sug.lon, sug.lat, sug.temporal}
-    numeric_cols = [c for c in cols
-                    if pd.api.types.is_numeric_dtype(df[c]) and c not in used]
-
-    # Y：优先命中提示词的数值列，否则取最后一个数值列
+    numeric_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c]) and c not in used]
     y_hits = [c for c in numeric_cols if _match_any(c, _Y_HINT)]
     sug.y = y_hits[0] if y_hits else (numeric_cols[-1] if numeric_cols else None)
-
-    # X：其余数值列
     sug.x = [c for c in numeric_cols if c != sug.y]
-
     sug.candidates = {
         "lon": lon_c or [c for c in cols if _looks_like_lon(df[c])],
         "lat": lat_c or [c for c in cols if _looks_like_lat(df[c])],
         "temporal": time_c,
-        "numeric": numeric_cols + ([sug.y] if sug.y else []),
+        "numeric": numeric_cols + ([sug.y] if sug.y and sug.y not in numeric_cols else []),
     }
+
+    if sug.lon and sug.lat and _match_any(sug.lon, _LON_KEYS) and _match_any(sug.lat, _LAT_KEYS):
+        sug.confidence = 0.92
+        sug.reason = f"列名命中 {sug.lon}/{sug.lat}"
+    elif sug.lon and sug.lat:
+        sug.confidence = 0.62
+        sug.reason = "按数值范围推断经纬度，请人工确认"
+    else:
+        sug.confidence = 0.2
+        sug.reason = "未能可靠识别经纬度列"
     return sug
 
 
@@ -130,7 +142,6 @@ class ValidationResult:
 
 def validate_mapping(df: pd.DataFrame, y: str, x: list[str], lon: str, lat: str,
                      temporal: str | None = None, model_type: str = "GNNWR") -> ValidationResult:
-    """校验最终映射是否自洽（提交训练前调用）。"""
     errors: list[str] = []
     warnings: list[str] = []
     cols = set(df.columns)
@@ -154,7 +165,6 @@ def validate_mapping(df: pd.DataFrame, y: str, x: list[str], lon: str, lat: str,
     if lon == lat:
         errors.append("经度与纬度不能是同一列")
 
-    # 缺失值提醒（不阻断，交由清洗环节处理）
     if not errors:
         involved = [c for c in ([y, lon, lat] + x + ([temporal] if temporal else [])) if c in cols]
         miss = df[involved].isna().sum()
@@ -167,3 +177,60 @@ def validate_mapping(df: pd.DataFrame, y: str, x: list[str], lon: str, lat: str,
             warnings.append(f"{lat} 的数值范围不像纬度，请确认坐标系")
 
     return ValidationResult(ok=len(errors) == 0, errors=errors, warnings=warnings)
+
+
+_INT_RE = re.compile(r"^-?\d+$")
+
+
+def infer_field_schema(df: pd.DataFrame, sample_n: int = 5) -> list[dict]:
+    out = []
+    n = max(len(df), 1)
+    for c in df.columns:
+        s = df[c]
+        missing = int(s.isna().sum())
+        kind = "unknown"
+        stats = None
+        if pd.api.types.is_bool_dtype(s):
+            kind = "boolean"
+        elif pd.api.types.is_datetime64_any_dtype(s):
+            kind = "datetime"
+        elif pd.api.types.is_integer_dtype(s):
+            kind = "integer"
+        elif pd.api.types.is_numeric_dtype(s):
+            kind = "numeric"
+        else:
+            as_str = s.dropna().astype(str)
+            if len(as_str) and as_str.str.match(_INT_RE).mean() > 0.9:
+                kind = "integer"
+            else:
+                kind = "text"
+        if kind in ("numeric", "integer") and pd.api.types.is_numeric_dtype(s):
+            v = pd.to_numeric(s, errors="coerce").dropna()
+            if len(v):
+                stats = {
+                    "min": float(v.min()), "max": float(v.max()),
+                    "mean": float(v.mean()), "std": float(v.std() or 0),
+                    "q25": float(v.quantile(0.25)), "q50": float(v.quantile(0.5)),
+                    "q75": float(v.quantile(0.75)),
+                }
+        samples = s.dropna().head(sample_n).tolist()
+        samples = [_py(x) for x in samples]
+        out.append({
+            "name": str(c),
+            "kind": kind,
+            "missing_count": missing,
+            "missing_ratio": round(missing / n, 4),
+            "distinct_count": int(s.nunique(dropna=True)),
+            "sample_values": samples,
+            "stats": stats,
+        })
+    return out
+
+
+def _py(v):
+    try:
+        return v.item()
+    except AttributeError:
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return v

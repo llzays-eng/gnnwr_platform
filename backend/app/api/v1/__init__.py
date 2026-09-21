@@ -1,4 +1,3 @@
-"""聚合 v1 所有子路由。"""
 from fastapi import APIRouter
 
 from app.api.v1 import auth, datasets, models, projects, reports, spatial

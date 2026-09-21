@@ -1,0 +1,42 @@
+/* Element Plus 主题桥接。
+ * 只覆盖变量, 不覆盖选择器 —— 一旦开始写 .el-button { ... },
+ * 组件升级就会踩到内部结构变化。 */
+:root {
+  --el-color-primary: var(--c-signal);
+  --el-color-success: var(--c-isoline);
+  --el-color-warning: var(--c-ochre);
+  --el-color-danger:  var(--c-alarm);
+  --el-color-error:   var(--c-alarm);
+
+  --el-text-color-primary:   var(--fg);
+  --el-text-color-regular:   var(--fg);
+  --el-text-color-secondary: var(--fg-muted);
+  --el-text-color-placeholder: var(--fg-faint);
+
+  --el-bg-color:         var(--s-surface);
+  --el-bg-color-overlay: var(--s-raised);
+  --el-bg-color-page:    var(--s-page);
+  --el-fill-color-blank: var(--s-surface);
+  --el-fill-color-light: var(--s-inset);
+
+  --el-border-color:        var(--edge);
+  --el-border-color-light:  var(--edge);
+  --el-border-color-lighter:var(--edge);
+  --el-border-radius-base:  var(--r-sm);
+  --el-border-radius-small: var(--r-xs);
+
+  --el-font-family: var(--font-body);
+  --el-font-size-base: var(--fs-14);
+
+  --el-box-shadow-light: var(--e1);
+  --el-box-shadow:       var(--e2);
+}
+
+/* Element Plus 的表格数字默认是比例字形, 对不齐。
+   这是科学界面里的硬需求, 所以这一处必须覆盖选择器。 */
+.el-table .cell,
+.el-input__inner[type='number'],
+.el-statistic__number {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}

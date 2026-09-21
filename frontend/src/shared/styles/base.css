@@ -1,0 +1,51 @@
+@import './tokens.css';
+@import './element-bridge.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  background: var(--s-page);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: var(--track-display);
+  margin: 0;
+}
+
+/* 键盘可达与可见焦点是质量底线。用 :focus-visible 而非 :focus,
+   避免鼠标点击也出现焦点环。 */
+:focus-visible {
+  outline: 2px solid var(--c-signal);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+::selection { background: color-mix(in srgb, var(--c-signal) 26%, transparent); }
+
+/* 数字对齐: 凡是数值都该用这个类 */
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+/* 蜡纸浮层。backdrop-filter 单写在这里, Uno shortcut 引用它。 */
+.panel-mylar {
+  background: var(--s-panel);
+  backdrop-filter: blur(var(--blur-panel)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--blur-panel)) saturate(1.1);
+  border-radius: var(--r-panel);
+  box-shadow: var(--e1);
+}
+
+/* 屏幕阅读器专用 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
