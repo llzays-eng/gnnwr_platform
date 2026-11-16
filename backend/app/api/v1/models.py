@@ -49,7 +49,9 @@ def train(req: TrainRequest, db: Session = Depends(get_db),
           user: User = Depends(get_current_user)):
     _check_owner(db, req.project_id, user)
     ds = db.get(Dataset, req.dataset_id)
-    if not ds:
+    # 数据集必须属于请求中（已校验归属的）项目，否则可借自己的项目训练他人数据集。
+    # 不存在与不属于统一返回 404，避免泄露 dataset_id 是否存在。
+    if not ds or ds.project_id != req.project_id:
         raise HTTPException(status_code=404, detail="数据集不存在")
     csv_key = f"datasets/{req.dataset_id}/cleaned.csv"
     if not storage.exists(csv_key):
