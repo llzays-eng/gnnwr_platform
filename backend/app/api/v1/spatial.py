@@ -17,7 +17,8 @@ from app.services.crs_transform import gcj02_to_wgs84, normalize_crs, wgs84_to_g
 from app.services.geoserver import geoserver
 from app.services.signed_url import append_query, create_tile_token, verify_tile_token
 from app.services.surface import (
-    field_bbox_gcj02, legend_png, load_points_cached, render_bbox_png, render_xyz,
+    MAX_RENDER_PX, MAX_TILE_ZOOM, field_bbox_gcj02, legend_png, load_points_cached,
+    render_bbox_png, render_xyz, valid_tile,
 )
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
@@ -92,8 +93,8 @@ def tiles(
     time_start: float | None = None,
     time_end: float | None = None,
     fields: str | None = Query(None, description="逗号分隔属性列"),
-    limit: int = 5000,
-    cursor: str | None = None,
+    limit: int = Query(5000, ge=1, le=10000, description="单页条数，上限 10000"),
+    cursor: int | None = Query(None, ge=0, description="上一页返回的 next_cursor"),
     output_crs: str | None = Query(None, description="WGS84（默认，对齐前端）或 GCJ02"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -110,7 +111,7 @@ def tiles(
     )
     out_crs = (output_crs or settings.VECTOR_OUTPUT_CRS).upper().replace("-", "")
 
-    offset = int(cursor or 0)
+    offset = cursor or 0
     sql = """
         SELECT id, ST_X(geom) AS lon, ST_Y(geom) AS lat, observed_time, properties
         FROM spatial_features
@@ -214,6 +215,10 @@ def surface(task_id: str, db: Session = Depends(get_db),
 def surface_xyz(task_id: str, z: int, x: int, y: int, sig: str | None = None,
                 db: Session = Depends(get_db)):
     verify_tile_token(sig, task_id)
+    if not valid_tile(z, x, y):
+        raise HTTPException(
+            status_code=400, detail=f"瓦片坐标非法：z 应在 0..{MAX_TILE_ZOOM}，x/y 应在 0..2^z-1",
+        )
     if not db.get(ModelTask, task_id):
         raise HTTPException(status_code=404, detail="任务不存在")
     png = render_xyz(task_id, z, x, y)
@@ -233,8 +238,8 @@ def wms_getmap(
     task_id: str,
     sig: str | None = None,
     BBOX: str | None = None,
-    WIDTH: int = 256,
-    HEIGHT: int = 256,
+    WIDTH: int = Query(256, ge=1, le=MAX_RENDER_PX),
+    HEIGHT: int = Query(256, ge=1, le=MAX_RENDER_PX),
     REQUEST: str = "GetMap",
     db: Session = Depends(get_db),
 ):

@@ -135,11 +135,16 @@ class PreviewResponse(BaseModel):
     n_rows_total: int | None = None
 
 
+MIN_CHUNK_SIZE = 256 * 1024
+MAX_CHUNK_SIZE = 64 * 1024 * 1024
+
+
 class ChunkInitRequest(BaseModel):
     project_id: str
-    filename: str
-    size: int
-    chunk_size: int = 8 * 1024 * 1024
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+    # 单片上限决定了 /chunk 接口单次请求的内存占用上限（P1-2）
+    chunk_size: int = Field(default=8 * 1024 * 1024, ge=MIN_CHUNK_SIZE, le=MAX_CHUNK_SIZE)
     source_crs: str | None = None
 
 

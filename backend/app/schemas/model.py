@@ -1,34 +1,52 @@
 """建模契约：对齐独立前端 TrainRequest / ModelTask / ModelResult / BaselineComparison。"""
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+# 训练资源上限（P1-3）：与前端 StepNetwork/StepTraining 的输入框范围对齐，
+# 防止 max_epochs=1e9、hidden_layers=[100000,100000] 之类请求长期占死 GPU worker。
+MAX_HIDDEN_LAYERS = 10
+MAX_LAYER_WIDTH = 1024
+MAX_EPOCHS = 5000
+MAX_BATCH_SIZE = 4096
+MAX_PATIENCE = 5000
+MAX_FEATURE_COLUMNS = 200
+
+LayerWidth = Annotated[int, Field(ge=1, le=MAX_LAYER_WIDTH)]
+HiddenLayers = Annotated[list[LayerWidth], Field(min_length=1, max_length=MAX_HIDDEN_LAYERS)]
+Epochs = Annotated[int, Field(ge=1, le=MAX_EPOCHS)]
+Patience = Annotated[int, Field(ge=1, le=MAX_PATIENCE)]
+LearningRate = Annotated[float, Field(gt=0, le=1)]
+Ratio = Annotated[float, Field(ge=0, le=1)]
+ColumnName = Annotated[str, Field(min_length=1, max_length=256)]
+
+
 class DatasetSplit(BaseModel):
-    train: float = 0.7
-    val: float = 0.1
-    test: float = 0.2
+    train: Ratio = 0.7
+    val: Ratio = 0.1
+    test: Ratio = 0.2
 
 
 class ModelHyperparams(BaseModel):
     """同时接受前端字段（hidden_layers / max_epochs / learning_rate）与主仓别名。"""
 
-    hidden_layers: list[int] = Field(default_factory=lambda: [64, 32])
-    hidden: list[int] | None = None
-    activation: str = "tanh"
-    dropout: float = 0.0
-    batch_size: int | None = None
-    max_epochs: int = 200
-    max_epoch: int | None = None
-    learning_rate: float = 3e-3
-    lr: float | None = None
-    early_stopping_patience: int = 30
-    patience: int | None = None
+    hidden_layers: HiddenLayers = Field(default_factory=lambda: [64, 32])
+    hidden: HiddenLayers | None = None
+    activation: str = Field(default="tanh", max_length=32)
+    dropout: float = Field(default=0.0, ge=0, lt=1)
+    batch_size: int | None = Field(default=None, ge=1, le=MAX_BATCH_SIZE)
+    max_epochs: Epochs = 200
+    max_epoch: Epochs | None = None
+    learning_rate: LearningRate = 3e-3
+    lr: LearningRate | None = None
+    early_stopping_patience: Patience = 30
+    patience: Patience | None = None
     split: DatasetSplit = Field(default_factory=DatasetSplit)
-    random_seed: int = 42
-    l2_coef: float = 1e-3
+    random_seed: int = Field(default=42, ge=0, le=2**32 - 1)
+    l2_coef: float = Field(default=1e-3, ge=0, le=1)
 
     def normalized(self) -> dict:
         hidden = self.hidden or self.hidden_layers
@@ -61,12 +79,12 @@ class TrainRequest(BaseModel):
     project_id: str
     dataset_id: str
     model_type: str = Field(default="GNNWR", description="GNNWR | GTNNWR")
-    y_column: str
-    x_columns: list[str]
-    spatial_columns: list[str]
-    temporal_column: str | None = None
-    test_ratio: float | None = None
-    valid_ratio: float | None = None
+    y_column: ColumnName
+    x_columns: Annotated[list[ColumnName], Field(max_length=MAX_FEATURE_COLUMNS)]
+    spatial_columns: Annotated[list[ColumnName], Field(max_length=2)]
+    temporal_column: ColumnName | None = None
+    test_ratio: Ratio | None = None
+    valid_ratio: Ratio | None = None
     hyperparams: ModelHyperparams = Field(default_factory=ModelHyperparams)
 
     @field_validator("model_type")

@@ -101,6 +101,19 @@ class StorageService:
             settings.MINIO_BUCKET, key, expires=timedelta(seconds=expires)
         )
 
+    def delete(self, key: str) -> None:
+        """删除单个对象；不存在时静默。"""
+        if self._minio:
+            try:
+                self._minio.remove_object(settings.MINIO_BUCKET, key)
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        try:
+            (self._local_dir / key).unlink()
+        except FileNotFoundError:
+            pass
+
     def list_prefix(self, prefix: str) -> list[str]:
         if self._minio:
             return [o.object_name for o in self._minio.list_objects(
@@ -111,7 +124,7 @@ class StorageService:
             return []
         if root.is_file():
             return [prefix]
-        return [str(p.relative_to(self._local_dir)) for p in root.rglob("*") if p.is_file()]
+        return [p.relative_to(self._local_dir).as_posix() for p in root.rglob("*") if p.is_file()]
 
 
 storage = StorageService()

@@ -1,6 +1,7 @@
 """数据预处理异步任务：清洗 + 坐标转换 + PostGIS 入库。"""
 from __future__ import annotations
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.project import Dataset
 from app.services import ingest
@@ -71,6 +72,10 @@ def run_preprocess(dataset_id: str, mapping: dict) -> dict:
         db.close()
 
 
-@celery_app.task(bind=True, name="app.tasks.ingest_task.preprocess_task", queue="cpu_queue")
+@celery_app.task(
+    bind=True, name="app.tasks.ingest_task.preprocess_task", queue="cpu_queue",
+    soft_time_limit=settings.PREPROCESS_SOFT_TIME_LIMIT_S,
+    time_limit=settings.PREPROCESS_TIME_LIMIT_S,
+)
 def preprocess_task(self, dataset_id: str, mapping: dict):
     return run_preprocess(dataset_id, mapping)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -44,6 +45,33 @@ def _get_task(db: Session, task_id: str, user: User) -> ModelTask:
     return task
 
 
+def _check_active_quota(db: Session, user: User) -> None:
+    """P1-3：限制单用户同时排队/运行的训练任务数。
+
+    只统计最近 (硬超时 + 1h) 内创建的任务：worker 整体崩溃时任务可能永远停在
+    RUNNING，不加时间窗会把该用户永久锁死。
+    """
+    limit = settings.MAX_ACTIVE_TRAIN_TASKS_PER_USER
+    if limit <= 0:
+        return
+    window = timedelta(seconds=settings.TRAIN_TIME_LIMIT_S + 3600)
+    active = db.scalar(
+        select(func.count())
+        .select_from(ModelTask)
+        .join(Project, Project.id == ModelTask.project_id)
+        .where(
+            Project.user_id == user.id,
+            ModelTask.status.in_(("PENDING", "RUNNING")),
+            ModelTask.created_at >= func.now() - window,
+        )
+    ) or 0
+    if active >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"同时进行中的训练任务最多 {limit} 个，请等已有任务结束或取消后再提交",
+        )
+
+
 @router.post("/train", response_model=ModelTaskOut, status_code=202)
 def train(req: TrainRequest, db: Session = Depends(get_db),
           user: User = Depends(get_current_user)):
@@ -56,6 +84,7 @@ def train(req: TrainRequest, db: Session = Depends(get_db),
     csv_key = f"datasets/{req.dataset_id}/cleaned.csv"
     if not storage.exists(csv_key):
         raise HTTPException(status_code=409, detail="请先完成数据预处理（缺少 cleaned.csv）")
+    _check_active_quota(db, user)
 
     hp = req.hyperparams.normalized()
     if req.test_ratio is not None:

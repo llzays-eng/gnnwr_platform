@@ -32,4 +32,11 @@ celery_app.conf.update(
         "app.tasks.training.*": {"queue": "gpu_queue"},
         "app.tasks.ingest_task.*": {"queue": "cpu_queue"},
     },
+    # P1-3：没有超时的话，一个超大/卡死的任务会永久占住 -c 1 的 worker。
+    # 这里给全局兜底；训练/预处理在各自 @task 上用更具体的 settings 值覆盖。
+    task_soft_time_limit=settings.TRAIN_SOFT_TIME_LIMIT_S,
+    task_time_limit=settings.TRAIN_TIME_LIMIT_S,
+    # acks_late 下 worker 子进程被杀（OOM / hard limit）时不要把消息退回队列，
+    # 否则同一个会打挂 worker 的任务会被反复投递。
+    task_reject_on_worker_lost=False,
 )

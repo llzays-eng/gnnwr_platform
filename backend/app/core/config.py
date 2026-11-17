@@ -57,6 +57,15 @@ class Settings(BaseSettings):
 
     ENGINE_BACKEND: str = "gnnwr_lite"
 
+    # ---- 任务资源上限（P1-3）----
+    # soft 到点抛 SoftTimeLimitExceeded，任务自行落 FAILED；hard 到点直接杀子进程兜底。
+    TRAIN_SOFT_TIME_LIMIT_S: int = 4 * 3600
+    TRAIN_TIME_LIMIT_S: int = 4 * 3600 + 300
+    PREPROCESS_SOFT_TIME_LIMIT_S: int = 30 * 60
+    PREPROCESS_TIME_LIMIT_S: int = 30 * 60 + 120
+    # 单用户同时处于 PENDING/RUNNING 的训练任务数上限，避免一人占满 gpu_queue。
+    MAX_ACTIVE_TRAIN_TASKS_PER_USER: int = 3
+
     CORS_ORIGINS: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:5173",

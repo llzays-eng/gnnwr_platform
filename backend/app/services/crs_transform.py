@@ -96,3 +96,61 @@ def offshore_ratio(points: list[tuple[float, float]], sample: int = 200) -> floa
         if out_of_china(lon, lat):
             bad += 1
     return bad / checked if checked else 0.0
+
+
+# ---- 向量化版本（曲面渲染逐像素反解用；与上面的标量实现逐点等价）----
+
+def _np():
+    import numpy as np  # 局部导入：本模块的标量函数不依赖 numpy
+    return np
+
+
+def _out_of_china_np(lon, lat):
+    return ~((lon >= 72.004) & (lon <= 137.8347) & (lat >= 0.8293) & (lat <= 55.8271))
+
+
+def _transform_lat_np(x, y):
+    np = _np()
+    ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * np.sqrt(np.abs(x))
+    ret += (20.0 * np.sin(6.0 * x * _PI) + 20.0 * np.sin(2.0 * x * _PI)) * 2.0 / 3.0
+    ret += (20.0 * np.sin(y * _PI) + 40.0 * np.sin(y / 3.0 * _PI)) * 2.0 / 3.0
+    ret += (160.0 * np.sin(y / 12.0 * _PI) + 320 * np.sin(y * _PI / 30.0)) * 2.0 / 3.0
+    return ret
+
+
+def _transform_lon_np(x, y):
+    np = _np()
+    ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * np.sqrt(np.abs(x))
+    ret += (20.0 * np.sin(6.0 * x * _PI) + 20.0 * np.sin(2.0 * x * _PI)) * 2.0 / 3.0
+    ret += (20.0 * np.sin(x * _PI) + 40.0 * np.sin(x / 3.0 * _PI)) * 2.0 / 3.0
+    ret += (150.0 * np.sin(x / 12.0 * _PI) + 300.0 * np.sin(x / 30.0 * _PI)) * 2.0 / 3.0
+    return ret
+
+
+def wgs84_to_gcj02_np(lon, lat):
+    np = _np()
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    dlat = _transform_lat_np(lon - 105.0, lat - 35.0)
+    dlon = _transform_lon_np(lon - 105.0, lat - 35.0)
+    radlat = lat / 180.0 * _PI
+    magic = np.sin(radlat)
+    magic = 1 - _EE * magic * magic
+    sqrtmagic = np.sqrt(magic)
+    dlat = (dlat * 180.0) / ((_A * (1 - _EE)) / (magic * sqrtmagic) * _PI)
+    dlon = (dlon * 180.0) / (_A / sqrtmagic * np.cos(radlat) * _PI)
+    outside = _out_of_china_np(lon, lat)
+    return np.where(outside, lon, lon + dlon), np.where(outside, lat, lat + dlat)
+
+
+def gcj02_to_wgs84_np(lon, lat, rounds: int = 3):
+    np = _np()
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    outside = _out_of_china_np(lon, lat)
+    wlon, wlat = lon.copy(), lat.copy()
+    for _ in range(rounds):
+        glon, glat = wgs84_to_gcj02_np(wlon, wlat)
+        wlon = wlon + (lon - glon)
+        wlat = wlat + (lat - glat)
+    return np.where(outside, lon, wlon), np.where(outside, lat, wlat)

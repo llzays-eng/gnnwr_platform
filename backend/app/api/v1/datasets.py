@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -30,7 +32,13 @@ from app.tasks.ingest_task import preprocess_task, run_preprocess
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 _ALLOWED = {"csv", "tsv", "xlsx", "xls", "geojson", "json"}
+# 只有按行的文本格式能在不整读入内存的前提下抽样识别；超过单次上限的大文件只收这两种。
+_STREAMABLE = {"csv", "tsv"}
 _MAX = settings.MAX_UPLOAD_MB * 1024 * 1024
+_MAX_CHUNKED = 2 * 1024 ** 3
+_READ_BLOCK = 1024 * 1024
+# 分片上传完成时只读前 N 行推断字段，避免 2GB 文件在 API 进程里被 pandas 整体解析。
+_INSPECT_ROWS = 50_000
 
 
 def _owns_project(db: Session, project_id: str, user: User) -> Project:
@@ -90,6 +98,54 @@ def _inspect_bytes(data: bytes, ext: str) -> tuple[list, dict, int]:
     return infer_field_schema(df), sug.as_column_guess(), len(df)
 
 
+def _inspect_text_file(path: str, ext: str) -> tuple[list, dict, int]:
+    """CSV/TSV：抽样前 _INSPECT_ROWS 行推断字段，行数按换行符流式计数。
+
+    行数是近似值（字段内含换行时偏大）；预处理完成后 row_count 会被真实入库行数覆盖。
+    """
+    import pandas as pd
+
+    sep = "\t" if ext == "tsv" else ","
+    df = pd.read_csv(path, sep=sep, nrows=_INSPECT_ROWS)
+    sug = suggest_mapping(df)
+    newlines = 0
+    last = b""
+    with open(path, "rb") as fh:
+        while block := fh.read(_READ_BLOCK):
+            newlines += block.count(b"\n")
+            last = block[-1:]
+    rows = newlines + (1 if last and last != b"\n" else 0) - 1  # 减表头
+    return infer_field_schema(df), sug.as_column_guess(), max(rows, len(df))
+
+
+async def _read_upload_limited(file: UploadFile, limit: int) -> bytes:
+    """按块读取，超过 limit 立即 413，不把超限文件整读进内存。"""
+    too_big = HTTPException(
+        status_code=413, detail=f"文件超过 {settings.MAX_UPLOAD_MB}MB，请走分片上传",
+    )
+    if file.size is not None and file.size > limit:
+        raise too_big
+    buf = bytearray()
+    while block := await file.read(_READ_BLOCK):
+        buf.extend(block)
+        if len(buf) > limit:
+            raise too_big
+    return bytes(buf)
+
+
+def _chunk_count(meta: dict) -> int:
+    chunk_size = int(meta["chunk_size"])
+    return (int(meta["size"]) + chunk_size - 1) // chunk_size
+
+
+def _expected_chunk_len(meta: dict, n: int) -> int:
+    chunk_size = int(meta["chunk_size"])
+    total = _chunk_count(meta)
+    if n < total - 1:
+        return chunk_size
+    return int(meta["size"]) - chunk_size * (total - 1)
+
+
 @router.post("/upload", response_model=DatasetOut, status_code=201)
 async def upload(project_id: str = Form(...), file: UploadFile = File(...),
                  source_crs: str | None = Form(None),
@@ -98,9 +154,7 @@ async def upload(project_id: str = Form(...), file: UploadFile = File(...),
     ext = _ext_of(file.filename or "dataset.csv")
     if ext not in _ALLOWED:
         raise HTTPException(status_code=400, detail=f"不支持的文件类型：.{ext}")
-    data = await file.read()
-    if len(data) > _MAX:
-        raise HTTPException(status_code=413, detail=f"文件超过 {settings.MAX_UPLOAD_MB}MB，请走分片上传")
+    data = await _read_upload_limited(file, _MAX)
 
     ds_id = str(uuid.uuid4())
     key = f"datasets/{ds_id}/raw.{ext}"
@@ -127,8 +181,16 @@ async def upload(project_id: str = Form(...), file: UploadFile = File(...),
 def upload_init(payload: ChunkInitRequest, db: Session = Depends(get_db),
                 user: User = Depends(get_current_user)):
     _owns_project(db, payload.project_id, user)
-    if payload.size > 2 * 1024 ** 3:
+    ext = _ext_of(payload.filename)
+    if ext not in _ALLOWED:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型：.{ext}")
+    if payload.size > _MAX_CHUNKED:
         raise HTTPException(status_code=413, detail="单文件上限 2GB")
+    if payload.size > _MAX and ext not in _STREAMABLE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"超过 {settings.MAX_UPLOAD_MB}MB 的大文件仅支持 CSV/TSV，请先转换格式",
+        )
     upload_id = str(uuid.uuid4())
     meta = {
         "project_id": payload.project_id, "filename": payload.filename,
@@ -162,14 +224,38 @@ def _save_upload_meta(upload_id: str, meta: dict) -> None:
         storage.put_bytes(f"uploads/{upload_id}/meta.json", json.dumps(meta).encode())
 
 
+def _drop_upload_meta(upload_id: str) -> None:
+    if redis_available():
+        get_sync_redis().delete(f"upload:{upload_id}")
+    else:
+        storage.delete(f"uploads/{upload_id}/meta.json")
+
+
 @router.put("/upload/{upload_id}/chunk/{n}")
 async def upload_chunk(upload_id: str, n: int, request: Request,
                        user: User = Depends(get_current_user)):
     meta = _load_upload_meta(upload_id)
     if meta.get("user_id") != user.id:
         raise HTTPException(status_code=404, detail="upload_id 不存在或已过期")
-    data = await request.body()
-    storage.put_bytes(f"uploads/{upload_id}/chunk_{n}", data)
+    total = _chunk_count(meta)
+    if not 0 <= n < total:
+        raise HTTPException(status_code=400, detail=f"分片序号越界：应在 0..{total - 1}")
+    expected = _expected_chunk_len(meta, n)
+    wrong_size = HTTPException(status_code=413, detail=f"分片 {n} 应为 {expected} 字节")
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > expected:
+        raise wrong_size
+    # 流式读取并计数：单片内存占用不超过 chunk_size（≤64MB），超长立即中止。
+    buf = bytearray()
+    async for block in request.stream():
+        buf.extend(block)
+        if len(buf) > expected:
+            raise wrong_size
+    if len(buf) != expected:
+        raise HTTPException(
+            status_code=400, detail=f"分片 {n} 应为 {expected} 字节，实际 {len(buf)}",
+        )
+    storage.put_bytes(f"uploads/{upload_id}/chunk_{n}", bytes(buf))
     chunks = set(meta.get("chunks") or [])
     chunks.add(n)
     meta["chunks"] = sorted(chunks)
@@ -183,30 +269,66 @@ def upload_complete(upload_id: str, db: Session = Depends(get_db),
     meta = _load_upload_meta(upload_id)
     if meta.get("user_id") != user.id:
         raise HTTPException(status_code=404, detail="upload_id 不存在或已过期")
-    chunk_size = int(meta["chunk_size"])
-    total = (int(meta["size"]) + chunk_size - 1) // chunk_size
-    parts = []
-    for i in range(total):
-        parts.append(storage.get_bytes(f"uploads/{upload_id}/chunk_{i}"))
-    data = b"".join(parts)
+    _owns_project(db, meta["project_id"], user)
     ext = _ext_of(meta["filename"])
+    if ext not in _ALLOWED:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型：.{ext}")
+    total = _chunk_count(meta)
+    prefix = f"uploads/{upload_id}/"
+    present = set(storage.list_prefix(prefix))
+    missing = [i for i in range(total) if f"{prefix}chunk_{i}" not in present]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "分片未传完", "missing_chunks": missing[:100],
+                    "missing_count": len(missing)},
+        )
+
     ds_id = str(uuid.uuid4())
     key = f"datasets/{ds_id}/raw.{ext}"
-    storage.put_bytes(key, data)
+    # 逐片追加到临时文件再整体上传：内存峰值约为单片大小，而不是整个文件的数倍。
+    fd, tmp_path = tempfile.mkstemp(prefix="gnnwr-upload-", suffix=f".{ext}")
     try:
-        schema_json, guess, n = _inspect_bytes(data, ext)
-    except Exception:
-        schema_json, guess, n = [], {}, 0
+        written = 0
+        with os.fdopen(fd, "wb") as out:
+            for i in range(total):
+                part = storage.get_bytes(f"{prefix}chunk_{i}")
+                out.write(part)
+                written += len(part)
+        if written != int(meta["size"]):
+            raise HTTPException(
+                status_code=400, detail=f"合并后大小 {written} 与声明的 {meta['size']} 不符",
+            )
+        storage.put_file(key, tmp_path)
+        try:
+            if ext in _STREAMABLE:
+                schema_json, guess, n = _inspect_text_file(tmp_path, ext)
+            else:
+                # 非 CSV/TSV 在 init 阶段已被限制在 MAX_UPLOAD_MB 以内
+                with open(tmp_path, "rb") as fh:
+                    schema_json, guess, n = _inspect_bytes(fh.read(), ext)
+        except Exception:
+            schema_json, guess, n = [], {}, 0
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
     ds = Dataset(
         id=ds_id, project_id=meta["project_id"],
         name=meta["filename"], filename=meta["filename"],
         storage_path=key, file_type=ext, format=_format_of(ext),
-        source_crs=meta.get("source_crs"), size_bytes=len(data), row_count=n,
+        source_crs=meta.get("source_crs"), size_bytes=written, row_count=n,
         status="uploaded", schema_json=schema_json, column_guess=guess,
     )
     db.add(ds)
     db.commit()
     db.refresh(ds)
+    # 清理分片与会话：释放存储，也让同一个 upload_id 不能再 complete 出第二个数据集。
+    for i in range(total):
+        storage.delete(f"{prefix}chunk_{i}")
+    _drop_upload_meta(upload_id)
     return dataset_out(ds)
 
 
@@ -227,7 +349,8 @@ def upload_presign(payload: ChunkInitRequest, db: Session = Depends(get_db),
 
 
 @router.get("/{dataset_id}/preview", response_model=PreviewResponse)
-def preview(dataset_id: str, rows: int = Query(20, alias="rows"), n: int | None = None,
+def preview(dataset_id: str, rows: int = Query(20, alias="rows", ge=1, le=1000),
+            n: int | None = Query(None, ge=1, le=1000),
             db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     ds = _owns_dataset(db, dataset_id, user)
     limit = n or rows

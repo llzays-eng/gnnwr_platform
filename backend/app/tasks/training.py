@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from celery.exceptions import SoftTimeLimitExceeded  # noqa: E402
 
+from app.core.config import settings  # noqa: E402
 from app.core.database import SessionLocal  # noqa: E402
 from app.models.model_task import BaselineComparison, ModelResult, ModelTask  # noqa: E402
 from app.services.engine_runner import run_analysis  # noqa: E402
@@ -45,6 +47,20 @@ def run_train(task_id: str, csv_key: str, celery_id: str | None = None) -> dict:
         task = db.get(ModelTask, task_id)
         if task is None:
             return {"task_id": task_id, "error": "task not found"}
+
+        # 只有 PENDING 的任务才开跑。RUNNING 说明上一次执行时 worker 整体挂掉、
+        # 消息被 broker 重新投递（acks_late）——直接判失败，避免同一个大任务反复把 worker 打挂；
+        # SUCCESS/FAILED（含排队中被取消）则什么都不做。
+        if task.status == "RUNNING":
+            msg = "训练进程异常退出（可能内存不足），任务未重试，请调小数据或网络规模后重新提交"
+            _set_status(db, task, "FAILED", error=msg,
+                        error_code="WORKER_LOST", error_retryable=False,
+                        finished_at=datetime.now(timezone.utc))
+            append_log(task_id, msg, "error")
+            publish_progress(task_id, build_status_message(task_id, "FAILED", msg, code="WORKER_LOST"))
+            return {"task_id": task_id, "status": "FAILED", "error_code": "WORKER_LOST"}
+        if task.status != "PENDING":
+            return {"task_id": task_id, "status": task.status, "skipped": True}
 
         _set_status(
             db, task, "RUNNING",
@@ -183,6 +199,19 @@ def run_train(task_id: str, csv_key: str, celery_id: str | None = None) -> dict:
         publish_progress(task_id, build_status_message(task_id, "SUCCESS"))
         return {"task_id": task_id, "metrics": result["metrics"]}
 
+    except SoftTimeLimitExceeded:
+        db.rollback()
+        task = db.get(ModelTask, task_id)
+        limit_min = settings.TRAIN_SOFT_TIME_LIMIT_S // 60
+        msg = f"训练超过 {limit_min} 分钟上限，已终止"
+        if task is not None:
+            _set_status(db, task, "FAILED", error=msg,
+                        error_code="TASK_TIMEOUT", error_retryable=False,
+                        finished_at=datetime.now(timezone.utc))
+        append_log(task_id, msg, "error")
+        publish_progress(task_id, build_status_message(task_id, "FAILED", msg, code="TASK_TIMEOUT"))
+        return {"task_id": task_id, "status": "FAILED", "error_code": "TASK_TIMEOUT"}
+
     except TaskCancelled:
         task = db.get(ModelTask, task_id)
         if task is not None:
@@ -212,6 +241,10 @@ def run_train(task_id: str, csv_key: str, celery_id: str | None = None) -> dict:
         db.close()
 
 
-@celery_app.task(bind=True, name="app.tasks.training.train_task", queue="gpu_queue")
+@celery_app.task(
+    bind=True, name="app.tasks.training.train_task", queue="gpu_queue",
+    soft_time_limit=settings.TRAIN_SOFT_TIME_LIMIT_S,
+    time_limit=settings.TRAIN_TIME_LIMIT_S,
+)
 def train_task(self, task_id: str, csv_key: str):
     return run_train(task_id, csv_key, celery_id=self.request.id)
