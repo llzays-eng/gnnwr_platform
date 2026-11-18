@@ -1,0 +1,10 @@
+# 仅本地开发：把数据服务端口映射到宿主机回环地址，方便在宿主机上直接跑 uvicorn / celery。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgis redis minio
+# 只绑定 127.0.0.1，局域网/公网不可达。不要在服务器上用这个文件。
+services:
+  postgis:
+    ports: ["127.0.0.1:5432:5432"]
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
+  minio:
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]

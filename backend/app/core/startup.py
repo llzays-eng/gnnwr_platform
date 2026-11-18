@@ -13,7 +13,22 @@ class InsecureConfiguration(RuntimeError):
     pass
 
 
+# 仓库里出现过的默认口令。已有数据卷的库改口令需要手动 ALTER USER，所以这里只告警不拒绝启动。
+_WEAK_DEFAULTS = {
+    "POSTGRES_PASSWORD": {"gnnwr_pass"},
+    "MINIO_SECRET_KEY": {"minioadmin"},
+}
+
+
+def warn_weak_defaults() -> list[str]:
+    weak = [k for k, bad in _WEAK_DEFAULTS.items() if getattr(settings, k, None) in bad]
+    if weak and not settings.DEBUG:
+        log.warning("*** 以下配置仍是仓库默认口令，生产请更换：%s ***", ", ".join(weak))
+    return weak
+
+
 def assert_secure_startup() -> None:
+    warn_weak_defaults()
     if not is_placeholder_secret(settings.SECRET_KEY):
         return
     msg = (

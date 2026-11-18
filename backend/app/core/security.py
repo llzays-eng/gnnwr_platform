@@ -31,7 +31,9 @@ def _encode(payload: dict) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_access_token(subject: str, role: str, expires_minutes: int | None = None) -> str:
+def create_access_token(
+    subject: str, role: str, expires_minutes: int | None = None, gen: int = 0,
+) -> str:
     minutes = expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
     now = datetime.now(timezone.utc)
     payload = {
@@ -39,19 +41,21 @@ def create_access_token(subject: str, role: str, expires_minutes: int | None = N
         "role": role,
         "typ": "access",
         "jti": uuid4().hex,
+        "gen": int(gen),  # 用户令牌代数；logout-all 后旧代数令牌全部失效
         "iat": now,
         "exp": now + timedelta(minutes=minutes),
     }
     return _encode(payload)
 
 
-def create_refresh_token(subject: str, role: str) -> str:
+def create_refresh_token(subject: str, role: str, gen: int = 0) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": subject,
         "role": role,
         "typ": "refresh",
         "jti": uuid4().hex,
+        "gen": int(gen),  # 用户令牌代数；logout-all 后旧代数令牌全部失效
         "iat": now,
         "exp": now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     }

@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.redis_client import is_jti_denied
+from app.core.redis_client import is_token_revoked
 from app.core.security import decode_token
 from app.models.model_task import ModelTask
 from app.models.project import Project
@@ -36,7 +36,7 @@ async def _resolve_user_id(websocket: WebSocket, task_id: str) -> str | None:
     if token:
         try:
             payload = decode_token(token)
-            if payload.get("typ") in (None, "access") and not is_jti_denied(payload.get("jti")):
+            if payload.get("typ") in (None, "access") and not is_token_revoked(payload):
                 return payload.get("sub")
         except jwt.PyJWTError:
             return None

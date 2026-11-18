@@ -1,16 +1,18 @@
 # GNNWR 平台 monorepo：API + Workers + 前端 + PostGIS/Redis/MinIO
 # 可选：docker compose --profile extras up  启动 GeoServer
+# 安全（P1-6）：PostGIS / Redis / MinIO 只在 compose 内部网络可达，不映射宿主机端口；
+#   口令没有默认值，未在 .env 设置时 compose 直接报错。本地开发需要从宿主机连接时：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgis redis minio
 services:
   postgis:
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gnnwr}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnnwr_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-gnnwr_platform}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports: ["5432:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gnnwr}"]
       interval: 5s
@@ -19,7 +21,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD}
+    # 口令从环境变量读，避免写进 compose 文件；$$ 让 compose 不做插值，交给容器内 sh 展开
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -27,13 +33,14 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # 官方 minio/minio 镜像已从 Docker Hub / quay.io 下架；改用社区延续版 SILO（pgsty/minio），
+    # 命令与环境变量与原版一致。固定版本，升级时手动改 tag。
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?请在 .env 设置 MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?请在 .env 设置 MINIO_SECRET_KEY}
     volumes: [minio_data:/data]
-    ports: ["9000:9000", "9001:9001"]
 
   geoserver:
     profiles: ["extras"]
@@ -42,7 +49,8 @@ services:
       GEOSERVER_ADMIN_USER: ${GEOSERVER_USER:-admin}
       GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_PASSWORD:-geoserver}
     volumes: [geoserver_data:/opt/geoserver_data]
-    ports: ["8080:8080"]
+    # 默认口令 admin/geoserver，仅绑定本机回环；对外提供前请改 GEOSERVER_PASSWORD
+    ports: ["127.0.0.1:8080:8080"]
 
   api:
     build: ./backend
@@ -50,17 +58,19 @@ services:
       POSTGRES_HOST: postgis
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-gnnwr}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnnwr_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-gnnwr_platform}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 设置 REDIS_PASSWORD}
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?请在 .env 设置 MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?请在 .env 设置 MINIO_SECRET_KEY}
       MINIO_BUCKET: gnnwr
       LOCAL_STORAGE_DIR: /data/gnnwr-storage
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
-      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION_please_use_openssl_rand_hex_32}
+      # 非 DEBUG 下占位符会被 API 拒绝启动；这里不给默认值，缺失时 compose 直接报错而不是 api 反复重启
+      SECRET_KEY: ${SECRET_KEY:?请在 .env 设置 SECRET_KEY（openssl rand -hex 32）}
       ENGINE_BACKEND: ${ENGINE_BACKEND:-gnnwr_lite}
       SURFACE_TILE_CRS: GCJ02
       VECTOR_OUTPUT_CRS: WGS84

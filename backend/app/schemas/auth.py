@@ -79,6 +79,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """可选：同时吊销 refresh_token。旧客户端不带请求体也可以。"""
+
+    refresh_token: str | None = None
+
+
 class WsTicketOut(BaseModel):
     ticket: str
     expires_in: int = 120

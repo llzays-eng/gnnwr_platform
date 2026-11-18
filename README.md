@@ -16,9 +16,12 @@
 
 ```bash
 cp .env.example .env
-# 生产务必修改 SECRET_KEY 与数据库密码
+# 必填：SECRET_KEY / POSTGRES_PASSWORD / REDIS_PASSWORD / MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+# 每项可用 openssl rand -hex 32 生成；留空时 compose 会直接报错提示缺哪一项
 docker compose up -d --build
 ```
+
+PostGIS / Redis / MinIO 只在 compose 内部网络可达，不映射到宿主机；Redis 开启了口令。
 
 - 前端：http://localhost:5173  
 - API 文档：http://localhost:8000/docs  
@@ -27,8 +30,9 @@ docker compose up -d --build
 ## 本地开发
 
 ```bash
-# 基础设施
-docker compose up -d postgis redis minio
+# 基础设施（dev 覆盖文件把端口映射到 127.0.0.1，供宿主机上的后端连接）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgis redis minio
+# 宿主机后端的 .env 里填同样的 POSTGRES_PASSWORD / REDIS_PASSWORD / MINIO_*
 
 # 后端
 cd backend && python -m venv .venv && source .venv/bin/activate

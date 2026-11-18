@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import quote
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,8 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
+    # compose 部署下 Redis 开启 requirepass（P1-6）；本地无密码 Redis 留空即可
+    REDIS_PASSWORD: str = ""
 
     STORAGE_BACKEND: str = "auto"  # auto | minio | local
     MINIO_ENDPOINT: str = "localhost:9000"
@@ -77,13 +80,15 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_uri(self) -> str:
         return (
-            f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+psycopg://{quote(self.POSTGRES_USER, safe='')}:"
+            f"{quote(self.POSTGRES_PASSWORD, safe='')}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     @property
     def redis_uri(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        auth = f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
+        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     @property
     def ws_must_auth(self) -> bool:
